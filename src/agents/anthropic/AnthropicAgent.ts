@@ -4,7 +4,7 @@ import type { MessageParam } from '@anthropic-ai/sdk/src/resources/messages';
 import type { Channel, DefaultGenerics, Event, StreamChat } from 'stream-chat';
 import type { AIAgent } from '../types';
 import { content } from '../../content';
-import { OpenAIEmbeddings } from 'langchain/embeddings/openai';
+import { OpenAIEmbeddings } from '@langchain/openai';
 import { Document } from 'langchain/document';
 import { MemoryVectorStore } from 'langchain/vectorstores/memory';
 
