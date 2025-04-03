@@ -4,6 +4,59 @@ import type { MessageParam } from '@anthropic-ai/sdk/src/resources/messages';
 import type { Channel, DefaultGenerics, Event, StreamChat } from 'stream-chat';
 import type { AIAgent } from '../types';
 import { content } from '../../content';
+import { OpenAIEmbeddings } from 'langchain/embeddings/openai';
+import { Document } from 'langchain/document';
+import { MemoryVectorStore } from 'langchain/vectorstores/memory';
+
+type WebsitePage = {
+  text: string;
+  url: string;
+};
+
+type ChatRequest = {
+  message: string;
+};
+
+type ChatResponse = {
+  response: string;
+  relevantPages?: {
+    title: string;
+    url: string;
+  }[];
+};
+
+type Doc = {
+  pageContent: string;
+  metadata: Record<string, string>;
+}
+
+let vectorStore: MemoryVectorStore | null = null;
+
+const embeddings = new OpenAIEmbeddings({
+  openAIApiKey: process.env.OPENAI_API_KEY || '',
+});
+
+async function initializeVectorStore() {
+  const documents = content.map(
+    (page) => new Document({
+      pageContent: page.text,
+      metadata: { url: page.url },
+    })
+  );
+  
+  vectorStore = await MemoryVectorStore.fromDocuments(documents, embeddings);
+  console.log("Vector store initialized with website content");
+}
+
+async function searchRelevantContent(query: string, k: number = 3) {
+  if (!vectorStore) {
+    console.log("Vector store not initialized yet");
+    return [];
+  }
+  
+  const results = await vectorStore.similaritySearch(query, k);
+  return results;
+}
 
 export class AnthropicAgent implements AIAgent {
   private anthropic?: Anthropic;
@@ -32,6 +85,8 @@ export class AnthropicAgent implements AIAgent {
     }
     this.anthropic = new Anthropic({ apiKey });
 
+    initializeVectorStore().catch(console.error);
+
     this.chatClient.on('message.new', this.handleMessage);
   };
 
@@ -48,6 +103,8 @@ export class AnthropicAgent implements AIAgent {
 
     const message = e.message.text;
     if (!message) return;
+
+    const relevantContent = await searchRelevantContent(message);
 
     this.lastInteractionTs = Date.now();
 
@@ -66,9 +123,27 @@ export class AnthropicAgent implements AIAgent {
       });
     }
 
+    const contextContent = relevantContent.map((doc: Doc)  => {
+      return `Page: (${doc.metadata.url})\nContent: ${doc.pageContent}`;
+    }).join('\n\n');
+
+    // Add context about your website
+    const systemPrompt = `
+      You are a helpful assistant for Interact Software website. 
+      Answer questions based on the following information from our website.
+      If the information doesn't contain the answer, suggest contacting support at support@interactsoftware.com.
+      
+      Website Information:
+      ${contextContent || "No specific information available for this query."}
+      
+      General Information:
+      - We provide web intranet services
+      - Our support hours are 9am-5pm EST Monday-Friday
+    `;
+
     const anthropicStream = await this.anthropic.messages.create({
       max_tokens: 1024,
-      system: content,
+      system: systemPrompt,
       messages,
       model: 'claude-3-5-sonnet-20241022',
       stream: true,
